@@ -1,0 +1,7 @@
+# Copy this file to terraform.tfvars and fill in your values
+# Do NOT commit terraform.tfvars to git (it is in .gitignore)
+
+candidate_email       = "your_email@example.com"
+cognito_test_password = "TempPass123!"
+github_repo           = "https://github.com/YOUR_GITHUB_USERNAME/aws-assessment"
+prefix                = "unleash"

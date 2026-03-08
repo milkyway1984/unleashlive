@@ -1,0 +1,235 @@
+name: Terraform CI/CD – Unleash live Assessment
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  TF_VERSION:    "1.7.5"
+  PYTHON_VERSION: "3.12"
+  AWS_REGION:    "us-east-1"
+  TF_STATE_KEY:  "unleash-assessment/terraform.tfstate"
+
+permissions:
+  id-token: write   # required for OIDC token request
+  contents: read
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 1 – Lint & Validate  (no AWS credentials needed)
+  # ══════════════════════════════════════════════════════════════════════════
+  lint-validate:
+    name: "Lint & Validate"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init (no backend)
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 2 – Security Scan (checkov)
+  # ══════════════════════════════════════════════════════════════════════════
+  security-scan:
+    name: "Security Scan (checkov)"
+    runs-on: ubuntu-latest
+    needs: lint-validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install checkov
+        run: pip install checkov
+
+      - name: Run checkov IaC scan
+        run: |
+          checkov \
+            --directory . \
+            --framework terraform \
+            --output cli \
+            --output sarif \
+            --output-file-path . \
+            --soft-fail \
+            --skip-check CKV_AWS_116,CKV_AWS_117
+          # CKV_AWS_116 – Lambda DLQ: not needed for assessment
+          # CKV_AWS_117 – Lambda VPC: intentionally public (no NAT cost)
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 3 – Terraform Plan
+  # Uses OIDC – no long-lived AWS keys stored in secrets
+  # ══════════════════════════════════════════════════════════════════════════
+  plan:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+    needs: security-scan
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # OIDC: GitHub requests a short-lived token from AWS STS
+      # No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY needed
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume:    ${{ secrets.TF_ROLE_ARN }}
+          role-session-name: github-actions-plan
+          aws-region:        ${{ env.AWS_REGION }}
+
+      - name: Terraform Init (S3 backend)
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Plan
+        run: |
+          terraform plan -out=tfplan \
+            -var="candidate_email=${{ secrets.CANDIDATE_EMAIL }}" \
+            -var="github_repo=${{ secrets.GITHUB_REPO }}" \
+            -var="cognito_test_password=${{ secrets.COGNITO_PASSWORD }}"
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: tfplan
+          retention-days: 1
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 4 – Terraform Apply  (main branch push only)
+  # ══════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: "Terraform Apply"
+    runs-on: ubuntu-latest
+    needs: plan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    outputs:
+      cognito_user_pool_id:    ${{ steps.tf_outputs.outputs.cognito_user_pool_id }}
+      cognito_client_id:       ${{ steps.tf_outputs.outputs.cognito_client_id }}
+      api_endpoint_us_east_1:  ${{ steps.tf_outputs.outputs.api_endpoint_us_east_1 }}
+      api_endpoint_eu_west_1:  ${{ steps.tf_outputs.outputs.api_endpoint_eu_west_1 }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume:    ${{ secrets.TF_ROLE_ARN }}
+          role-session-name: github-actions-apply
+          aws-region:        ${{ env.AWS_REGION }}
+
+      - name: Terraform Init (S3 backend)
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Set Cognito user permanent password
+        run: |
+          USER_POOL_ID=$(terraform output -raw cognito_user_pool_id)
+          aws cognito-idp admin-set-user-password \
+            --user-pool-id  "$USER_POOL_ID" \
+            --username      "${{ secrets.CANDIDATE_EMAIL }}" \
+            --password      "${{ secrets.COGNITO_PASSWORD }}" \
+            --permanent \
+            --region us-east-1
+
+      - name: Extract Terraform outputs
+        id: tf_outputs
+        run: |
+          echo "cognito_user_pool_id=$(terraform output -raw cognito_user_pool_id)"       >> $GITHUB_OUTPUT
+          echo "cognito_client_id=$(terraform output -raw cognito_client_id)"             >> $GITHUB_OUTPUT
+          echo "api_endpoint_us_east_1=$(terraform output -raw api_endpoint_us_east_1)"  >> $GITHUB_OUTPUT
+          echo "api_endpoint_eu_west_1=$(terraform output -raw api_endpoint_eu_west_1)"  >> $GITHUB_OUTPUT
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 5 – Integration Tests
+  # ══════════════════════════════════════════════════════════════════════════
+  integration-test:
+    name: "Integration Tests"
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume:    ${{ secrets.TF_ROLE_ARN }}
+          role-session-name: github-actions-test
+          aws-region:        ${{ env.AWS_REGION }}
+
+      - name: Install test dependencies
+        run: pip install boto3 requests
+
+      - name: Run deployment test script
+        run: |
+          python scripts/test_deployment.py \
+            --user-pool-id "${{ needs.deploy.outputs.cognito_user_pool_id }}" \
+            --client-id    "${{ needs.deploy.outputs.cognito_client_id }}" \
+            --username     "${{ secrets.CANDIDATE_EMAIL }}" \
+            --password     "${{ secrets.COGNITO_PASSWORD }}" \
+            --api-us       "${{ needs.deploy.outputs.api_endpoint_us_east_1 }}" \
+            --api-eu       "${{ needs.deploy.outputs.api_endpoint_eu_west_1 }}"
