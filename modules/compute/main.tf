@@ -46,7 +46,8 @@ resource "aws_security_group" "ecs_task" {
 
 resource "aws_dynamodb_table" "greeting_logs" {
   name         = "${var.prefix}-GreetingLogs-${var.region}"
-  billing_mode = "PAY_PER_REQUEST"   # cost-optimised – no provisioned capacity
+  # cost-optimised – no provisioned capacity
+  billing_mode = "PAY_PER_REQUEST"   
   hash_key     = "id"
 
   attribute {
@@ -241,8 +242,10 @@ resource "aws_ecs_task_definition" "dispatcher" {
   family                   = "${var.prefix}-dispatcher-${var.region}"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = "256"   # 0.25 vCPU – minimum, cost-optimised
-  memory                   = "512"   # 512 MB – minimum for Fargate
+  # 0.25 vCPU – minimum, cost-optimised
+  cpu                      = "256"   
+  # 512 MB – minimum for Fargate
+  memory                   = "512"   
 
   execution_role_arn = aws_iam_role.ecs_task_exec.arn
   task_role_arn      = aws_iam_role.ecs_task_role.arn
