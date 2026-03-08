@@ -47,7 +47,7 @@ resource "aws_security_group" "ecs_task" {
 resource "aws_dynamodb_table" "greeting_logs" {
   name         = "${var.prefix}-GreetingLogs-${var.region}"
   # cost-optimised – no provisioned capacity
-  billing_mode = "PAY_PER_REQUEST"   
+  billing_mode = "PAY_PER_REQUEST"
   hash_key     = "id"
 
   attribute {
@@ -219,7 +219,8 @@ resource "aws_ecs_cluster" "main" {
 
   setting {
     name  = "containerInsights"
-    value = "disabled"  # cost-optimised for assessment
+    # cost-optimised for assessment
+    value = "disabled"
   }
 
   tags = {
@@ -243,9 +244,9 @@ resource "aws_ecs_task_definition" "dispatcher" {
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   # 0.25 vCPU – minimum, cost-optimised
-  cpu                      = "256"   
+  cpu    = "256"
   # 512 MB – minimum for Fargate
-  memory                   = "512"   
+  memory = "512"
 
   execution_role_arn = aws_iam_role.ecs_task_exec.arn
   task_role_arn      = aws_iam_role.ecs_task_role.arn

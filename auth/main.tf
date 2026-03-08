@@ -71,11 +71,11 @@ resource "aws_cognito_user_pool_client" "app" {
 
   # Token validity
   # hours
-  access_token_validity  = 1   
+  access_token_validity  = 1
   # hours
-  id_token_validity      = 1   
+  id_token_validity      = 1
   # days
-  refresh_token_validity = 30  
+  refresh_token_validity = 30
 
   token_validity_units {
     access_token  = "hours"
