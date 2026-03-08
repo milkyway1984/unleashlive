@@ -10,7 +10,7 @@ env:
   TF_VERSION:    "1.7.5"
   PYTHON_VERSION: "3.12"
   AWS_REGION:    "us-east-1"
-  TF_STATE_KEY:  "unleash-assessment/terraform.tfstate"
+  TF_STATE_KEY:  "assignment/terraform.tfstate"
 
 permissions:
   id-token: write   # required for OIDC token request
