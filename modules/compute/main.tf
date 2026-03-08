@@ -15,16 +15,11 @@ locals {
   current_region = data.aws_region.current.name
 }
 
-# ════════════════════════════════════════════════════════════════════════════
-# SECURITY GROUP
-# ════════════════════════════════════════════════════════════════════════════
-
 resource "aws_security_group" "ecs_task" {
   name        = "${var.prefix}-ecs-task-sg-${var.region}"
-  description = "Security group for ECS Fargate tasks – outbound only"
+  description = "Security group for ECS Fargate tasks - outbound only"
   vpc_id      = var.vpc_id
 
-  # Allow all outbound (needed to reach SNS endpoint and ECR)
   egress {
     from_port   = 0
     to_port     = 0
@@ -40,13 +35,8 @@ resource "aws_security_group" "ecs_task" {
   }
 }
 
-# ════════════════════════════════════════════════════════════════════════════
-# DYNAMODB TABLE
-# ════════════════════════════════════════════════════════════════════════════
-
 resource "aws_dynamodb_table" "greeting_logs" {
   name         = "${var.prefix}-GreetingLogs-${var.region}"
-  # cost-optimised – no provisioned capacity
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "id"
 
@@ -55,7 +45,6 @@ resource "aws_dynamodb_table" "greeting_logs" {
     type = "S"
   }
 
-  # Point-in-time recovery – good practice, no cost for small tables
   point_in_time_recovery {
     enabled = true
   }
@@ -66,10 +55,6 @@ resource "aws_dynamodb_table" "greeting_logs" {
     ManagedBy = "terraform"
   }
 }
-
-# ════════════════════════════════════════════════════════════════════════════
-# IAM – LAMBDA EXECUTION ROLE
-# ════════════════════════════════════════════════════════════════════════════
 
 resource "aws_iam_role" "lambda_exec" {
   name = "${var.prefix}-lambda-exec-${var.region}"
@@ -96,7 +81,6 @@ resource "aws_iam_role_policy" "lambda_exec_policy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # CloudWatch Logs
       {
         Effect = "Allow"
         Action = [
@@ -106,7 +90,6 @@ resource "aws_iam_role_policy" "lambda_exec_policy" {
         ]
         Resource = "arn:aws:logs:*:${local.account_id}:*"
       },
-      # DynamoDB – scoped to this table only
       {
         Effect = "Allow"
         Action = [
@@ -116,13 +99,11 @@ resource "aws_iam_role_policy" "lambda_exec_policy" {
         ]
         Resource = aws_dynamodb_table.greeting_logs.arn
       },
-      # SNS publish – scoped to Unleash live topic only
       {
         Effect   = "Allow"
         Action   = "sns:Publish"
         Resource = var.sns_topic_arn
       },
-      # ECS RunTask – scoped to this cluster's tasks
       {
         Effect = "Allow"
         Action = [
@@ -134,10 +115,9 @@ resource "aws_iam_role_policy" "lambda_exec_policy" {
           aws_ecs_cluster.main.arn
         ]
       },
-      # PassRole – allow Lambda to pass the ECS task role
       {
-        Effect   = "Allow"
-        Action   = "iam:PassRole"
+        Effect = "Allow"
+        Action = "iam:PassRole"
         Resource = [
           aws_iam_role.ecs_task_exec.arn,
           aws_iam_role.ecs_task_role.arn
@@ -146,10 +126,6 @@ resource "aws_iam_role_policy" "lambda_exec_policy" {
     ]
   })
 }
-
-# ════════════════════════════════════════════════════════════════════════════
-# IAM – ECS TASK EXECUTION ROLE (pull image, push logs)
-# ════════════════════════════════════════════════════════════════════════════
 
 resource "aws_iam_role" "ecs_task_exec" {
   name = "${var.prefix}-ecs-exec-${var.region}"
@@ -173,10 +149,6 @@ resource "aws_iam_role_policy_attachment" "ecs_exec_policy" {
   role       = aws_iam_role.ecs_task_exec.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
-
-# ════════════════════════════════════════════════════════════════════════════
-# IAM – ECS TASK ROLE (what the container can do at runtime)
-# ════════════════════════════════════════════════════════════════════════════
 
 resource "aws_iam_role" "ecs_task_role" {
   name = "${var.prefix}-ecs-task-role-${var.region}"
@@ -210,16 +182,11 @@ resource "aws_iam_role_policy" "ecs_task_sns" {
   })
 }
 
-# ════════════════════════════════════════════════════════════════════════════
-# ECS CLUSTER + TASK DEFINITION
-# ════════════════════════════════════════════════════════════════════════════
-
 resource "aws_ecs_cluster" "main" {
   name = "${var.prefix}-cluster-${var.region}"
 
   setting {
     name  = "containerInsights"
-    # cost-optimised for assessment
     value = "disabled"
   }
 
@@ -243,10 +210,8 @@ resource "aws_ecs_task_definition" "dispatcher" {
   family                   = "${var.prefix}-dispatcher-${var.region}"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  # 0.25 vCPU – minimum, cost-optimised
-  cpu    = "256"
-  # 512 MB – minimum for Fargate
-  memory = "512"
+  cpu                      = "256"
+  memory                   = "512"
 
   execution_role_arn = aws_iam_role.ecs_task_exec.arn
   task_role_arn      = aws_iam_role.ecs_task_role.arn
@@ -256,8 +221,6 @@ resource "aws_ecs_task_definition" "dispatcher" {
       name      = "dispatcher"
       image     = "amazon/aws-cli"
       essential = true
-
-      # Publish SNS message then exit
       command = [
         "sns", "publish",
         "--topic-arn", var.sns_topic_arn,
@@ -269,11 +232,9 @@ resource "aws_ecs_task_definition" "dispatcher" {
           repo   = var.github_repo
         })
       ]
-
       environment = [
         { name = "AWS_DEFAULT_REGION", value = "us-east-1" }
       ]
-
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -290,10 +251,6 @@ resource "aws_ecs_task_definition" "dispatcher" {
     ManagedBy = "terraform"
   }
 }
-
-# ════════════════════════════════════════════════════════════════════════════
-# LAMBDA – GREETER
-# ════════════════════════════════════════════════════════════════════════════
 
 data "archive_file" "greeter" {
   type        = "zip"
@@ -322,11 +279,11 @@ resource "aws_lambda_function" "greeter" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE    = aws_dynamodb_table.greeting_logs.name
-      SNS_TOPIC_ARN     = var.sns_topic_arn
-      CANDIDATE_EMAIL   = var.candidate_email
-      GITHUB_REPO       = var.github_repo
-      EXECUTING_REGION  = var.region
+      DYNAMODB_TABLE   = aws_dynamodb_table.greeting_logs.name
+      SNS_TOPIC_ARN    = var.sns_topic_arn
+      CANDIDATE_EMAIL  = var.candidate_email
+      GITHUB_REPO      = var.github_repo
+      EXECUTING_REGION = var.region
     }
   }
 
@@ -337,10 +294,6 @@ resource "aws_lambda_function" "greeter" {
     ManagedBy = "terraform"
   }
 }
-
-# ════════════════════════════════════════════════════════════════════════════
-# LAMBDA – DISPATCHER
-# ════════════════════════════════════════════════════════════════════════════
 
 data "archive_file" "dispatcher" {
   type        = "zip"
@@ -385,10 +338,6 @@ resource "aws_lambda_function" "dispatcher" {
   }
 }
 
-# ════════════════════════════════════════════════════════════════════════════
-# API GATEWAY (HTTP API)
-# ════════════════════════════════════════════════════════════════════════════
-
 resource "aws_apigatewayv2_api" "main" {
   name          = "${var.prefix}-api-${var.region}"
   protocol_type = "HTTP"
@@ -406,7 +355,6 @@ resource "aws_apigatewayv2_api" "main" {
   }
 }
 
-# Cognito JWT Authorizer
 resource "aws_apigatewayv2_authorizer" "cognito" {
   api_id           = aws_apigatewayv2_api.main.id
   authorizer_type  = "JWT"
@@ -419,7 +367,6 @@ resource "aws_apigatewayv2_authorizer" "cognito" {
   }
 }
 
-# Stage
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.main.id
   name        = "$default"
@@ -431,7 +378,6 @@ resource "aws_apigatewayv2_stage" "default" {
   }
 }
 
-# Lambda integrations
 resource "aws_apigatewayv2_integration" "greeter" {
   api_id                 = aws_apigatewayv2_api.main.id
   integration_type       = "AWS_PROXY"
@@ -446,7 +392,6 @@ resource "aws_apigatewayv2_integration" "dispatcher" {
   payload_format_version = "2.0"
 }
 
-# Routes
 resource "aws_apigatewayv2_route" "greet" {
   api_id             = aws_apigatewayv2_api.main.id
   route_key          = "GET /greet"
@@ -463,7 +408,6 @@ resource "aws_apigatewayv2_route" "dispatch" {
   authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
-# Lambda permissions for API Gateway
 resource "aws_lambda_permission" "greeter" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
