@@ -183,10 +183,7 @@ jobs:
           name: tfplan
 
       - name: Restore Lambda ZIPs
-        run: |
-          mkdir -p modules/compute/lambdas
-          mv greeter.zip modules/compute/lambdas/greeter.zip
-          mv dispatcher.zip modules/compute/lambdas/dispatcher.zip
+        run: ls modules/compute/lambdas/
 
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
