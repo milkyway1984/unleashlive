@@ -121,7 +121,7 @@ jobs:
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=${{ env.TF_STATE_KEY }}" \
-            -backend-config="region=eu-central-1"
+            -backend-config="region=us-east-1"
 
       - name: Terraform Plan
         run: |
