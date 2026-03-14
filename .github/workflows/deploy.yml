@@ -37,6 +37,12 @@ jobs:
       - name: Terraform Init (no backend)
         run: terraform init -backend=false
 
+      - name: Build Lambda ZIPs (required for validate)
+        run: |
+          cd modules/compute/lambdas
+          zip greeter.zip greeter.py
+          zip dispatcher.zip dispatcher.py
+
       - name: Terraform Validate
         run: terraform validate
 
@@ -141,7 +147,7 @@ jobs:
     name: "Terraform Apply"
     runs-on: ubuntu-latest
     needs: plan
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     outputs:
       cognito_user_pool_id:   ${{ steps.tf_outputs.outputs.cognito_user_pool_id }}

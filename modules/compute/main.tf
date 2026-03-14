@@ -252,7 +252,11 @@ resource "aws_ecs_task_definition" "dispatcher" {
   }
 }
 
-# Lambda ZIP built in CI before terraform plan
+data "archive_file" "greeter" {
+  type        = "zip"
+  source_file = "${path.module}/lambdas/greeter.py"
+  output_path = "${path.module}/lambdas/greeter.zip"
+}
 
 resource "aws_cloudwatch_log_group" "greeter" {
   name              = "/aws/lambda/${var.prefix}-greeter-${var.region}"
@@ -269,8 +273,8 @@ resource "aws_lambda_function" "greeter" {
   role             = aws_iam_role.lambda_exec.arn
   handler          = "greeter.handler"
   runtime          = "python3.12"
-  filename         = "${path.module}/lambdas/greeter.zip"
-  source_code_hash = filebase64sha256("${path.module}/lambdas/greeter.zip")
+  filename         = data.archive_file.greeter.output_path
+  source_code_hash = data.archive_file.greeter.output_base64sha256
   timeout          = 30
 
   environment {
@@ -291,7 +295,13 @@ resource "aws_lambda_function" "greeter" {
   }
 }
 
-# Lambda ZIP built in CI before terraform plan
+
+
+data "archive_file" "dispatcher" {
+  type        = "zip"
+  source_file = "${path.module}/lambdas/dispatcher.py"
+  output_path = "${path.module}/lambdas/dispatcher.zip"
+}
 
 resource "aws_cloudwatch_log_group" "dispatcher" {
   name              = "/aws/lambda/${var.prefix}-dispatcher-${var.region}"
@@ -308,8 +318,8 @@ resource "aws_lambda_function" "dispatcher" {
   role             = aws_iam_role.lambda_exec.arn
   handler          = "dispatcher.handler"
   runtime          = "python3.12"
-  filename         = "${path.module}/lambdas/dispatcher.zip"
-  source_code_hash = filebase64sha256("${path.module}/lambdas/dispatcher.zip")
+  filename         = data.archive_file.dispatcher.output_path
+  source_code_hash = data.archive_file.dispatcher.output_base64sha256
   timeout          = 60
 
   environment {
