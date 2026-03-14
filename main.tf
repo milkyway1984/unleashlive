@@ -12,7 +12,7 @@ terraform {
   # (see deploy.yml – TF_STATE_BUCKET secret)
   backend "s3" {
     key    = "unleash-assessment/terraform.tfstate"
-    region = "eu-central-1"
+    region = "us-east-1"
   }
 }
 
