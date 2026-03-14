@@ -1,4 +1,4 @@
-# Unleash live – AWS Multi-Region Assessment!
+# Unleash live – AWS Multi-Region Assessment
 
 A production-ready, cost-optimised multi-region serverless stack deployed with Terraform.
 
